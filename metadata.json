@@ -1,0 +1,6 @@
+{
+  "name": "DISASTRON",
+  "description": "Real-time disaster safety, live weather, nearby emergency services, SOS alerts, family safety, and disaster reporting system.",
+  "requestFramePermissions": ["geolocation"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

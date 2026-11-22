@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="India Emergency Helplines"
+            android:textColor="@color/brand_slate"
+            android:textSize="22sp"
+            android:textStyle="bold" />
+
+        <Button android:id="@+id/btnDial112" android:layout_width="match_parent" android:layout_height="52dp" android:layout_marginTop="14dp" android:backgroundTint="@color/emergency_red" android:text="112 — National Emergency Response (ERSS)" android:textColor="@color/white" />
+        <Button android:id="@+id/btnDial108" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:text="108 — Ambulance &amp; Medical Emergency" />
+        <Button android:id="@+id/btnDial100" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:text="100 — Police Control Room" />
+        <Button android:id="@+id/btnDial101" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:text="101 — Fire &amp; Rescue Services" />
+        <Button android:id="@+id/btnDial1078" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:text="1078 — NDMA Disaster Management Helpline" />
+        <Button android:id="@+id/btnDial1070" style="@style/Widget.Material3.Button.OutlinedButton" android:layout_width="match_parent" android:layout_height="50dp" android:layout_marginTop="8dp" android:text="1070 — State Disaster Control Room" />
+    </LinearLayout>
+</ScrollView>

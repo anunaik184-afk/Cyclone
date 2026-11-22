@@ -1,0 +1,13 @@
+# Copy this file to local.properties (do not commit local.properties to version control)
+# SDK path example:
+# sdk.dir=/Users/yourname/Library/Android/sdk
+
+# Existing Supabase Project URL and Publishable Key (never use service_role key)
+SUPABASE_URL=https://qpjmzqpomsitvdaxjgou.supabase.co
+SUPABASE_PUBLISHABLE_KEY=YOUR_SUPABASE_PUBLISHABLE_KEY
+
+# Google Maps Platform API Key (Maps SDK for Android + Places API New)
+MAPS_API_KEY=YOUR_GOOGLE_MAPS_API_KEY
+
+# CycloneSafe Server Base URL for AI Assistant (e.g. http://10.0.2.2:3000 for emulator or your HTTPS deployment URL)
+ASSISTANT_API_URL=http://10.0.2.2:3000

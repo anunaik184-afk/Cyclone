@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="brand_slate">#0F172A</color>
+    <color name="brand_slate_muted">#475569</color>
+    <color name="surface_bg">#F8FAFC</color>
+    <color name="surface_card">#FFFFFF</color>
+    <color name="border_hairline">#E2E8F0</color>
+    <color name="emergency_red">#DC2626</color>
+    <color name="emergency_red_dark">#B91C1C</color>
+    <color name="safe_green">#16A34A</color>
+    <color name="warning_amber">#D97706</color>
+    <color name="info_blue">#2563EB</color>
+    <color name="white">#FFFFFF</color>
+</resources>

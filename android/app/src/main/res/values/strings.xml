@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">CycloneSafe</string>
+    <string name="india_notice">CycloneSafe is configured for Indian emergency services (112/108/1078). Your GPS is currently outside India.</string>
+    <string name="weather_disclaimer">Forecast data from Open-Meteo. For official disaster warnings, verify with IMD and NDMA.</string>
+</resources>

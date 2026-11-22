@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.CycloneSafe" parent="Theme.Material3.Light.NoActionBar">
+        <item name="colorPrimary">@color/brand_slate</item>
+        <item name="colorOnPrimary">@color/white</item>
+        <item name="colorError">@color/emergency_red</item>
+        <item name="android:statusBarColor">@color/brand_slate</item>
+        <item name="android:windowBackground">@color/surface_bg</item>
+    </style>
+</resources>
