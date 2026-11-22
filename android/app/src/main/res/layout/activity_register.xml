@@ -95,6 +95,22 @@
             android:layout_marginBottom="12dp"
             android:visibility="gone" />
 
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnGoogleSignIn"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginBottom="10dp"
+            android:backgroundTint="@color/white"
+            android:text="Continue with Google"
+            android:textColor="@color/brand_slate"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            app:icon="@drawable/ic_google_logo"
+            app:iconGravity="textStart"
+            app:iconPadding="10dp"
+            app:iconTint="@null"
+            app:strokeColor="@color/info_blue" />
+
         <Button
             android:id="@+id/btnRegister"
             android:layout_width="match_parent"

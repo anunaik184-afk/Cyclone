@@ -20,9 +20,19 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:layout_marginBottom="20dp"
+        android:layout_marginBottom="6dp"
         android:textColor="@color/brand_slate_muted"
         android:textSize="14sp" />
+
+    <TextView
+        android:id="@+id/tvOtpExpiry"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="16dp"
+        android:textColor="@color/brand_slate"
+        android:textSize="13sp"
+        android:textStyle="bold"
+        android:visibility="gone" />
 
     <EditText
         android:id="@+id/etOtp"

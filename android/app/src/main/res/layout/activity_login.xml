@@ -55,7 +55,7 @@
             android:layout_height="52dp"
             android:layout_marginBottom="12dp"
             android:background="@android:drawable/edit_text"
-            android:hint="Password"
+            android:hint="Password (optional if using Email OTP Login)"
             android:inputType="textPassword"
             android:paddingHorizontal="14dp" />
 
@@ -63,9 +63,20 @@
             android:id="@+id/tvError"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="12dp"
+            android:layout_marginBottom="10dp"
             android:textColor="@color/emergency_red"
             android:textSize="13sp"
+            android:visibility="gone" />
+
+        <TextView
+            android:id="@+id/tvVerifyPendingLink"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:text="Verify / Resend Signup OTP for unconfirmed account"
+            android:textColor="@color/info_blue"
+            android:textSize="13sp"
+            android:textStyle="bold"
             android:visibility="gone" />
 
         <ProgressBar
@@ -76,13 +87,37 @@
             android:layout_marginBottom="12dp"
             android:visibility="gone" />
 
-        <Button
-            android:id="@+id/btnLogin"
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnGoogleSignIn"
+            style="@style/Widget.Material3.Button.OutlinedButton"
             android:layout_width="match_parent"
             android:layout_height="52dp"
-            android:backgroundTint="@color/brand_slate"
-            android:text="Sign In"
+            android:layout_marginBottom="10dp"
+            android:backgroundTint="@color/white"
+            android:text="Continue with Google"
+            android:textColor="@color/brand_slate"
+            xmlns:app="http://schemas.android.com/apk/res-auto"
+            app:icon="@drawable/ic_google_logo"
+            app:iconGravity="textStart"
+            app:iconPadding="10dp"
+            app:iconTint="@null"
+            app:strokeColor="@color/info_blue" />
+
+        <Button
+            android:id="@+id/btnOtpLogin"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:backgroundTint="@color/info_blue"
+            android:text="Sign In with 6-Digit Email OTP"
             android:textColor="@color/white" />
+
+        <Button
+            android:id="@+id/btnLogin"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:layout_marginTop="10dp"
+            android:text="Sign In with Email &amp; Password" />
 
         <TextView
             android:id="@+id/tvRegisterLink"

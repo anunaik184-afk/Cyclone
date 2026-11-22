@@ -25,7 +25,17 @@ import {ReportDisasterView} from './components/ReportDisasterView';
 import {SosView} from './components/SosView';
 import {WeatherView} from './components/WeatherView';
 import {isInsideIndia, type GpsLocationState} from './lib/location';
-import {supabase, type UserProfile, type UserSettings} from './lib/supabase';
+import {
+  formatSupabaseAuthError,
+  parseConfirmationCallbackFromUrl,
+} from './lib/authConfirmation';
+import {
+  formatSupabaseDbError,
+  requireAuthenticatedUserId,
+  supabase,
+  type UserProfile,
+  type UserSettings,
+} from './lib/supabase';
 import {fetchOpenMeteoWeather, type LiveWeatherData} from './lib/weather';
 
 type NavTab =
@@ -48,6 +58,12 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
+  const [authCallbackError, setAuthCallbackError] = useState<{
+    message: string;
+    source: 'oauth' | 'email';
+  } | null>(null);
+  const manualLogoutRef = useRef(false);
+  const wasSignedInRef = useRef(false);
   const [publicTab, setPublicTab] = useState<
     'auth' | 'map' | 'weather' | 'services' | 'guidelines'
   >('auth');
@@ -84,18 +100,89 @@ export default function App() {
     return () => window.removeEventListener('gmp-quota-exceeded', handler);
   }, []);
 
-  // Load authenticated Supabase session & profile
+  // Load authenticated Supabase session & profile (Email-verified or Google OAuth)
   const syncSession = useCallback(async () => {
+    const isVerifiedOrGoogleUser = (user: {
+      email_confirmed_at?: string | null;
+      app_metadata?: Record<string, unknown>;
+      identities?: Array<{provider?: string}>;
+    }): boolean => {
+      if (user.email_confirmed_at) return true;
+      if (user.app_metadata?.provider === 'google') return true;
+      const providers = user.app_metadata?.providers;
+      if (Array.isArray(providers) && providers.includes('google')) return true;
+      if (
+        Array.isArray(user.identities) &&
+        user.identities.some((id) => id.provider === 'google')
+      ) {
+        return true;
+      }
+      return false;
+    };
+
     if (!supabase) {
+      if (typeof window !== 'undefined') {
+        const parsed = parseConfirmationCallbackFromUrl(window.location.href);
+        if (parsed.kind === 'error') {
+          setAuthCallbackError({message: parsed.message, source: parsed.source});
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+      }
       setAuthReady(true);
       return;
     }
 
     try {
-      const {data} = await supabase.auth.getSession();
+      let callbackKind: ReturnType<typeof parseConfirmationCallbackFromUrl> = {
+        kind: 'none',
+      };
+      if (typeof window !== 'undefined') {
+        callbackKind = parseConfirmationCallbackFromUrl(window.location.href);
+        if (callbackKind.kind === 'error') {
+          setAuthCallbackError({
+            message: callbackKind.message,
+            source: callbackKind.source,
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+        } else if (callbackKind.kind === 'token_hash') {
+          const {error: verifyErr} = await supabase.auth.verifyOtp({
+            token_hash: callbackKind.tokenHash,
+            type: callbackKind.type,
+          });
+          window.history.replaceState({}, document.title, window.location.pathname);
+          if (verifyErr) {
+            setAuthCallbackError({
+              message: formatSupabaseAuthError(verifyErr),
+              source: 'email',
+            });
+          }
+        }
+      }
+
+      const {data, error: sessionErr} = await supabase.auth.getSession();
+      if (sessionErr) {
+        setAuthCallbackError({
+          message: formatSupabaseAuthError(sessionErr),
+          source: 'oauth',
+        });
+      }
       const session = data.session;
-      if (session?.user && session.user.email_confirmed_at) {
+      if (session?.user && isVerifiedOrGoogleUser(session.user)) {
+        if (
+          typeof window !== 'undefined' &&
+          (window.location.search || window.location.hash)
+        ) {
+          if (callbackKind.kind === 'code' || callbackKind.kind === 'implicit') {
+            window.history.replaceState({}, document.title, window.location.pathname);
+          }
+        }
+        wasSignedInRef.current = true;
+        manualLogoutRef.current = false;
+        setAuthCallbackError(null);
         setUserId(session.user.id);
+        setActiveTab('dashboard');
+        setPublicTab('auth');
+
         const [profRes, setRes] = await Promise.all([
           supabase
             .from('profiles')
@@ -109,15 +196,30 @@ export default function App() {
             .maybeSingle(),
         ]);
 
-        const resolvedProfile: UserProfile = (profRes.data as UserProfile) ?? {
-          id: session.user.id,
-          full_name:
+        let resolvedProfile = profRes.data as UserProfile | null;
+        if (!resolvedProfile) {
+          const displayName =
             (session.user.user_metadata?.full_name as string) ||
+            (session.user.user_metadata?.name as string) ||
             session.user.email ||
-            'Verified User',
-          email: session.user.email || '',
-          phone: (session.user.user_metadata?.phone as string) || '',
-        };
+            'Verified User';
+          const initialProfile = {
+            id: session.user.id,
+            full_name: displayName,
+            email: session.user.email || '',
+            phone:
+              (session.user.user_metadata?.phone as string) ||
+              session.user.phone ||
+              '',
+            updated_at: new Date().toISOString(),
+          };
+          const {data: insertedProf} = await supabase
+            .from('profiles')
+            .upsert(initialProfile, {onConflict: 'id', ignoreDuplicates: true})
+            .select()
+            .maybeSingle();
+          resolvedProfile = (insertedProf as UserProfile | null) ?? initialProfile;
+        }
         setProfile(resolvedProfile);
         setUserSettings(
           (setRes.data as UserSettings) ?? {
@@ -129,6 +231,19 @@ export default function App() {
           },
         );
       } else {
+        if (callbackKind.kind === 'code' || callbackKind.kind === 'implicit') {
+          window.history.replaceState({}, document.title, window.location.pathname);
+          if (!sessionErr) {
+            setAuthCallbackError({
+              message:
+                'Google authentication could not establish a session. Please try Continue with Google again.',
+              source: 'oauth',
+            });
+          }
+        }
+        if (session?.user && !isVerifiedOrGoogleUser(session.user)) {
+          await supabase.auth.signOut();
+        }
         setUserId(null);
         setProfile(null);
       }
@@ -140,10 +255,30 @@ export default function App() {
   useEffect(() => {
     syncSession();
     if (!supabase) return;
-    const {data: sub} = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session?.user && session.user.email_confirmed_at) {
+    const {data: sub} = supabase.auth.onAuthStateChange((event, session) => {
+      const isGoogle =
+        session?.user?.app_metadata?.provider === 'google' ||
+        (Array.isArray(session?.user?.identities) &&
+          session.user.identities.some((id) => id.provider === 'google'));
+
+      if (session?.user && (session.user.email_confirmed_at || isGoogle)) {
         syncSession();
       } else {
+        if (session?.user && !session.user.email_confirmed_at && !isGoogle) {
+          void supabase?.auth.signOut();
+        }
+        if (
+          event === 'SIGNED_OUT' &&
+          wasSignedInRef.current &&
+          !manualLogoutRef.current
+        ) {
+          setAuthCallbackError({
+            message: 'Session expired. Please sign in again.',
+            source: 'oauth',
+          });
+        }
+        wasSignedInRef.current = false;
+        manualLogoutRef.current = false;
         setUserId(null);
         setProfile(null);
       }
@@ -267,21 +402,32 @@ export default function App() {
     if (!supabase || !userId || !userSettings) return;
     setSettingsSaving(true);
     setSettingsNotice(null);
-    const {error} = await supabase.from('user_settings').upsert(
-      {
-        ...userSettings,
-        user_id: userId,
-        updated_at: new Date().toISOString(),
-      },
-      {onConflict: 'user_id'},
-    );
-    setSettingsSaving(false);
-    setSettingsNotice(
-      error ? `Save failed: ${error.message}` : 'Settings saved to Supabase.',
-    );
+    try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const {error} = await supabase.from('user_settings').upsert(
+        {
+          ...userSettings,
+          user_id: verifiedUserId,
+          updated_at: new Date().toISOString(),
+        },
+        {onConflict: 'user_id'},
+      );
+      setSettingsNotice(
+        error
+          ? `Save failed: ${formatSupabaseDbError(error.message)}`
+          : 'Settings saved to Supabase.',
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unable to save settings.';
+      setSettingsNotice(`Save failed: ${formatSupabaseDbError(msg)}`);
+    } finally {
+      setSettingsSaving(false);
+    }
   };
 
   const handleLogout = async () => {
+    manualLogoutRef.current = true;
+    wasSignedInRef.current = false;
     if (supabase) {
       await supabase.auth.signOut();
     }
@@ -347,7 +493,12 @@ export default function App() {
       {!userId ? (
         publicTab === 'auth' ? (
           <AuthGate
+            initialCallbackError={authCallbackError}
+            onClearCallbackError={() => setAuthCallbackError(null)}
             onAuthenticated={(uid, prof) => {
+              wasSignedInRef.current = true;
+              manualLogoutRef.current = false;
+              setAuthCallbackError(null);
               setUserId(uid);
               setProfile(prof);
               setActiveTab('dashboard');

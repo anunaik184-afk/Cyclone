@@ -1,6 +1,7 @@
 package com.cyclonesafe.app.ui;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.util.Patterns;
@@ -15,7 +16,7 @@ import com.cyclonesafe.app.data.SupabaseClient;
 
 public class RegisterActivity extends AppCompatActivity {
     private EditText etFullName, etEmail, etPhone, etPassword, etConfirmPassword;
-    private Button btnRegister;
+    private Button btnRegister, btnGoogleSignIn;
     private TextView tvError, tvLoginLink;
     private ProgressBar progressBar;
     private SupabaseClient supabase;
@@ -31,13 +32,29 @@ public class RegisterActivity extends AppCompatActivity {
         etPhone = findViewById(R.id.etPhone);
         etPassword = findViewById(R.id.etPassword);
         etConfirmPassword = findViewById(R.id.etConfirmPassword);
+        btnGoogleSignIn = findViewById(R.id.btnGoogleSignIn);
         btnRegister = findViewById(R.id.btnRegister);
         tvError = findViewById(R.id.tvError);
         tvLoginLink = findViewById(R.id.tvLoginLink);
         progressBar = findViewById(R.id.progressBar);
 
+        btnGoogleSignIn.setOnClickListener(v -> launchGoogleOAuth());
         btnRegister.setOnClickListener(v -> submitRegistration());
         tvLoginLink.setOnClickListener(v -> finish());
+    }
+
+    private void launchGoogleOAuth() {
+        tvError.setVisibility(View.GONE);
+        String authUrl = supabase.buildGoogleOAuthAuthorizeUrl();
+        if (authUrl.isEmpty()) {
+            showError("Invalid OAuth configuration: Supabase publishable key is missing.");
+            return;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(authUrl)));
+        } catch (Exception e) {
+            showError("Unable to open Google Sign-In browser: " + e.getMessage());
+        }
     }
 
     private void submitRegistration() {
@@ -73,10 +90,13 @@ public class RegisterActivity extends AppCompatActivity {
             public void onSuccess(String msg) {
                 progressBar.setVisibility(View.GONE);
                 btnRegister.setEnabled(true);
+                android.widget.Toast.makeText(RegisterActivity.this, msg, android.widget.Toast.LENGTH_LONG).show();
                 Intent intent = new Intent(RegisterActivity.this, OtpVerificationActivity.class);
                 intent.putExtra("email", email);
                 intent.putExtra("full_name", fullName);
                 intent.putExtra("phone", phone);
+                intent.putExtra("purpose", "signup");
+                intent.putExtra("has_active_otp", true);
                 startActivity(intent);
             }
 

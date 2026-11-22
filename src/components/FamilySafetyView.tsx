@@ -1,6 +1,8 @@
 import React, {useCallback, useEffect, useState} from 'react';
-import {AlertTriangle, Pencil, Plus, Trash2} from 'lucide-react';
+import {AlertTriangle, CheckCircle2, Pencil, Plus, Trash2} from 'lucide-react';
 import {
+  formatSupabaseDbError,
+  requireAuthenticatedUserId,
   supabase,
   type EmergencyContact,
   type FamilyMember,
@@ -15,6 +17,7 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
   const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   // Family form
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
@@ -22,7 +25,6 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
   const [mRel, setMRel] = useState('');
   const [mPhone, setMPhone] = useState('');
   const [mBlood, setMBlood] = useState('');
-  const [mNotes, setMNotes] = useState('');
   const [mStatus, setMStatus] = useState('Safe');
 
   // Contact form
@@ -30,7 +32,6 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
   const [cName, setCName] = useState('');
   const [cRel, setCRel] = useState('');
   const [cPhone, setCPhone] = useState('');
-  const [cEmail, setCEmail] = useState('');
   const [cPriority, setCPriority] = useState(1);
 
   const [saving, setSaving] = useState(false);
@@ -40,24 +41,34 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
     setLoading(true);
     setErrorMsg(null);
     try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
       const [famRes, conRes] = await Promise.all([
         supabase
           .from('family_members')
-          .select('*')
-          .eq('user_id', userId)
+          .select(
+            'id, user_id, name, relationship, phone, blood_group, status, notes, created_at, updated_at',
+          )
+          .eq('user_id', verifiedUserId)
           .order('created_at', {ascending: false}),
         supabase
           .from('emergency_contacts')
-          .select('*')
-          .eq('user_id', userId)
+          .select(
+            'id, user_id, contact_name, relationship, phone, email, priority, created_at, updated_at',
+          )
+          .eq('user_id', verifiedUserId)
           .order('priority', {ascending: true}),
       ]);
-      if (famRes.error) throw new Error(famRes.error.message);
-      if (conRes.error) throw new Error(conRes.error.message);
+      if (famRes.error) {
+        throw new Error(formatSupabaseDbError(famRes.error.message));
+      }
+      if (conRes.error) {
+        throw new Error(formatSupabaseDbError(conRes.error.message));
+      }
       setMembers((famRes.data as FamilyMember[]) ?? []);
       setContacts((conRes.data as EmergencyContact[]) ?? []);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to load family data.');
+      const msg = err instanceof Error ? err.message : 'Failed to load family data.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setLoading(false);
     }
@@ -73,7 +84,6 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
     setMRel('');
     setMPhone('');
     setMBlood('');
-    setMNotes('');
     setMStatus('Safe');
   };
 
@@ -82,41 +92,78 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
     setCName('');
     setCRel('');
     setCPhone('');
-    setCEmail('');
     setCPriority(1);
   };
 
   const handleSaveMember = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supabase) return;
+    if (!supabase) {
+      setErrorMsg('Supabase is not configured.');
+      return;
+    }
     setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const cleanName = mName.trim();
+    const cleanRel = mRel.trim();
+    const cleanPhone = mPhone.trim();
+    if (!cleanName || !cleanRel || !cleanPhone) {
+      setErrorMsg('Full name, relationship, and phone number are required.');
+      return;
+    }
+
     setSaving(true);
     try {
-      const payload = {
-        user_id: userId,
-        name: mName.trim(),
-        relationship: mRel.trim(),
-        phone: mPhone.trim(),
-        blood_group: mBlood.trim(),
-        medical_notes: mNotes.trim(),
-        safety_status: mStatus,
-        updated_at: new Date().toISOString(),
-      };
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const nowIso = new Date().toISOString();
+
       if (editingMemberId) {
-        const {error} = await supabase
+        const {data, error} = await supabase
           .from('family_members')
-          .update(payload)
+          .update({
+            name: cleanName,
+            relationship: cleanRel,
+            phone: cleanPhone,
+            blood_group: mBlood.trim(),
+            status: mStatus,
+            updated_at: nowIso,
+          })
           .eq('id', editingMemberId)
-          .eq('user_id', userId);
-        if (error) throw new Error(error.message);
+          .eq('user_id', verifiedUserId)
+          .select()
+          .single();
+
+        if (error || !data) {
+          throw new Error(error?.message || 'Could not update family member.');
+        }
+        setSuccessMsg(`Updated family member "${cleanName}" in Supabase.`);
       } else {
-        const {error} = await supabase.from('family_members').insert(payload);
-        if (error) throw new Error(error.message);
+        const {data, error} = await supabase
+          .from('family_members')
+          .insert({
+            user_id: verifiedUserId,
+            name: cleanName,
+            relationship: cleanRel,
+            phone: cleanPhone,
+            blood_group: mBlood.trim(),
+            status: mStatus,
+            notes: '',
+            updated_at: nowIso,
+          })
+          .select()
+          .single();
+
+        if (error || !data) {
+          throw new Error(error?.message || 'Could not save family member.');
+        }
+        setSuccessMsg(`Added family member "${cleanName}" to Supabase.`);
       }
+
       resetMemberForm();
       await loadAll();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Could not save family member.');
+      const msg = err instanceof Error ? err.message : 'Could not save family member.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setSaving(false);
     }
@@ -125,47 +172,93 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
   const handleDeleteMember = async (id: string) => {
     if (!supabase) return;
     setErrorMsg(null);
-    const {error} = await supabase
-      .from('family_members')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', userId);
-    if (error) setErrorMsg(error.message);
-    else await loadAll();
+    setSuccessMsg(null);
+    try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const {error} = await supabase
+        .from('family_members')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', verifiedUserId);
+      if (error) {
+        throw new Error(error.message);
+      }
+      setSuccessMsg('Family member deleted from Supabase.');
+      await loadAll();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Could not delete family member.';
+      setErrorMsg(formatSupabaseDbError(msg));
+    }
   };
 
   const handleSaveContact = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!supabase) return;
+    if (!supabase) {
+      setErrorMsg('Supabase is not configured.');
+      return;
+    }
     setErrorMsg(null);
+    setSuccessMsg(null);
+
+    const cleanName = cName.trim();
+    const cleanRel = cRel.trim();
+    const cleanPhone = cPhone.trim();
+    if (!cleanName || !cleanRel || !cleanPhone) {
+      setErrorMsg('Contact name, relationship, and phone number are required.');
+      return;
+    }
+
     setSaving(true);
     try {
-      const payload = {
-        user_id: userId,
-        name: cName.trim(),
-        relationship: cRel.trim(),
-        phone: cPhone.trim(),
-        email: cEmail.trim(),
-        priority: cPriority,
-        updated_at: new Date().toISOString(),
-      };
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const nowIso = new Date().toISOString();
+
       if (editingContactId) {
-        const {error} = await supabase
+        const {data, error} = await supabase
           .from('emergency_contacts')
-          .update(payload)
+          .update({
+            contact_name: cleanName,
+            relationship: cleanRel,
+            phone: cleanPhone,
+            priority: cPriority,
+            updated_at: nowIso,
+          })
           .eq('id', editingContactId)
-          .eq('user_id', userId);
-        if (error) throw new Error(error.message);
+          .eq('user_id', verifiedUserId)
+          .select()
+          .single();
+
+        if (error || !data) {
+          throw new Error(error?.message || 'Could not update emergency contact.');
+        }
+        setSuccessMsg(`Updated emergency contact "${cleanName}" in Supabase.`);
       } else {
-        const {error} = await supabase.from('emergency_contacts').insert(payload);
-        if (error) throw new Error(error.message);
+        const {data, error} = await supabase
+          .from('emergency_contacts')
+          .insert({
+            user_id: verifiedUserId,
+            contact_name: cleanName,
+            relationship: cleanRel,
+            phone: cleanPhone,
+            email: '',
+            priority: cPriority,
+            updated_at: nowIso,
+          })
+          .select()
+          .single();
+
+        if (error || !data) {
+          throw new Error(error?.message || 'Could not save emergency contact.');
+        }
+        setSuccessMsg(`Added emergency contact "${cleanName}" to Supabase.`);
       }
+
       resetContactForm();
       await loadAll();
     } catch (err) {
-      setErrorMsg(
-        err instanceof Error ? err.message : 'Could not save emergency contact.',
-      );
+      const msg =
+        err instanceof Error ? err.message : 'Could not save emergency contact.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setSaving(false);
     }
@@ -174,13 +267,24 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
   const handleDeleteContact = async (id: string) => {
     if (!supabase) return;
     setErrorMsg(null);
-    const {error} = await supabase
-      .from('emergency_contacts')
-      .delete()
-      .eq('id', id)
-      .eq('user_id', userId);
-    if (error) setErrorMsg(error.message);
-    else await loadAll();
+    setSuccessMsg(null);
+    try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const {error} = await supabase
+        .from('emergency_contacts')
+        .delete()
+        .eq('id', id)
+        .eq('user_id', verifiedUserId);
+      if (error) {
+        throw new Error(error.message);
+      }
+      setSuccessMsg('Emergency contact deleted from Supabase.');
+      await loadAll();
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Could not delete emergency contact.';
+      setErrorMsg(formatSupabaseDbError(msg));
+    }
   };
 
   return (
@@ -198,6 +302,13 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
         <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-800 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4 shrink-0" />
           <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {successMsg && (
+        <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs text-emerald-900 flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{successMsg}</span>
         </div>
       )}
 
@@ -250,13 +361,6 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                 <option value="Needs Check-in">Status: Needs Check-in</option>
                 <option value="Assistance Needed">Status: Assistance Needed</option>
               </select>
-              <input
-                type="text"
-                value={mNotes}
-                onChange={(e) => setMNotes(e.target.value)}
-                placeholder="Medical notes (optional)"
-                className="h-9 px-3 text-xs border border-slate-300 rounded-lg"
-              />
             </div>
 
             <div className="flex items-center gap-2">
@@ -294,10 +398,10 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                     </p>
                     <p className="text-xs text-slate-600 font-mono mt-0.5">
                       {m.phone}
-                      {m.blood_group ? ` · Blood ${m.blood_group}` : ''} · {m.safety_status}
+                      {m.blood_group ? ` · Blood ${m.blood_group}` : ''} · {m.status}
                     </p>
-                    {m.medical_notes && (
-                      <p className="text-xs text-slate-500 mt-0.5">{m.medical_notes}</p>
+                    {m.notes && (
+                      <p className="text-xs text-slate-500 mt-0.5">{m.notes}</p>
                     )}
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
@@ -309,8 +413,7 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                         setMRel(m.relationship);
                         setMPhone(m.phone);
                         setMBlood(m.blood_group || '');
-                        setMNotes(m.medical_notes || '');
-                        setMStatus(m.safety_status || 'Safe');
+                        setMStatus(m.status || 'Safe');
                       }}
                       title="Edit"
                       className="p-1.5 text-slate-600 hover:text-slate-900 cursor-pointer"
@@ -364,13 +467,6 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                 placeholder="Phone (+91...)"
                 className="h-9 px-3 text-xs border border-slate-300 rounded-lg"
               />
-              <input
-                type="email"
-                value={cEmail}
-                onChange={(e) => setCEmail(e.target.value)}
-                placeholder="Email (optional)"
-                className="h-9 px-3 text-xs border border-slate-300 rounded-lg"
-              />
               <select
                 value={cPriority}
                 onChange={(e) => setCPriority(Number(e.target.value))}
@@ -413,7 +509,7 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                 <div key={c.id} className="py-3 flex items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-semibold text-slate-900">
-                      {c.name} · Priority {c.priority}
+                      {c.contact_name} · Priority {c.priority}
                     </p>
                     <p className="text-xs text-slate-600 font-mono mt-0.5">
                       {c.relationship} · {c.phone}
@@ -425,10 +521,9 @@ export function FamilySafetyView({userId}: FamilySafetyViewProps) {
                       type="button"
                       onClick={() => {
                         setEditingContactId(c.id);
-                        setCName(c.name);
+                        setCName(c.contact_name);
                         setCRel(c.relationship);
                         setCPhone(c.phone);
-                        setCEmail(c.email || '');
                         setCPriority(c.priority || 1);
                       }}
                       title="Edit"

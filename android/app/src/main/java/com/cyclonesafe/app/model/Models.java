@@ -21,44 +21,50 @@ public class Models {
         public String relationship;
         public String phone;
         public String blood_group;
-        public String medical_notes;
-        public String safety_status;
+        public String status;
+        public String notes;
         public String created_at;
+        public String updated_at;
     }
 
     public static class EmergencyContact {
         public String id;
         public String user_id;
-        public String name;
+        public String contact_name;
         public String relationship;
         public String phone;
         public String email;
         public int priority;
         public String created_at;
+        public String updated_at;
     }
 
     public static class SosAlert {
         public String id;
         public String user_id;
+        public String emergency_type;
+        public String emergency_details;
         public double latitude;
         public double longitude;
-        public String alert_type;
-        public String alert_message;
+        public String location;
         public String status;
         public String created_at;
+        public String updated_at;
     }
 
     public static class DisasterReport {
         public String id;
         public String user_id;
-        public String category;
+        public String disaster_category;
+        public String locality;
         public String description;
         public double latitude;
         public double longitude;
-        public String location_label;
-        public String image_url;
+        public String incident_photo_url;
+        public String incident_photo_path;
         public String status;
         public String created_at;
+        public String updated_at;
     }
 
     public static class UserSettings {

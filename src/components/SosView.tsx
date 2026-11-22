@@ -10,6 +10,8 @@ import {
 } from 'lucide-react';
 import {type GpsLocationState} from '../lib/location';
 import {
+  formatSupabaseDbError,
+  requireAuthenticatedUserId,
   supabase,
   type EmergencyContact,
   type SosAlert,
@@ -34,6 +36,7 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
   const [alertType, setAlertType] = useState(ALERT_TYPES[0]);
   const [message, setMessage] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
   const [statusNotice, setStatusNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -44,25 +47,37 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
   const loadData = useCallback(async () => {
     if (!supabase) return;
     setLoadingHistory(true);
+    setErrorMsg(null);
     try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
       const [sosRes, contactsRes] = await Promise.all([
         supabase
           .from('sos_alerts')
-          .select('*')
-          .eq('user_id', userId)
+          .select(
+            'id, user_id, emergency_type, emergency_details, latitude, longitude, location, status, created_at, updated_at',
+          )
+          .eq('user_id', verifiedUserId)
           .order('created_at', {ascending: false}),
         supabase
           .from('emergency_contacts')
-          .select('*')
-          .eq('user_id', userId)
+          .select(
+            'id, user_id, contact_name, relationship, phone, email, priority, created_at, updated_at',
+          )
+          .eq('user_id', verifiedUserId)
           .order('priority', {ascending: true}),
       ]);
 
-      if (sosRes.error) throw new Error(sosRes.error.message);
+      if (sosRes.error) {
+        throw new Error(formatSupabaseDbError(sosRes.error.message));
+      }
+      if (contactsRes.error) {
+        throw new Error(formatSupabaseDbError(contactsRes.error.message));
+      }
       setHistory((sosRes.data as SosAlert[]) ?? []);
       setContacts((contactsRes.data as EmergencyContact[]) ?? []);
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Failed to load SOS history.');
+      const msg = err instanceof Error ? err.message : 'Failed to load SOS history.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setLoadingHistory(false);
     }
@@ -94,15 +109,21 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
 
     setSubmitting(true);
     try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const nowIso = new Date().toISOString();
+      const locationText = `${gps.lat.toFixed(5)}, ${gps.lng.toFixed(5)}`;
+
       const {data, error} = await supabase
         .from('sos_alerts')
         .insert({
-          user_id: userId,
+          user_id: verifiedUserId,
+          emergency_type: alertType,
+          emergency_details: finalMessage,
           latitude: gps.lat,
           longitude: gps.lng,
-          alert_type: alertType,
-          alert_message: finalMessage,
+          location: locationText,
           status: 'ACTIVE',
+          updated_at: nowIso,
         })
         .select()
         .single();
@@ -117,9 +138,43 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
       setMessage('');
       await loadData();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'SOS insertion failed.');
+      const msg = err instanceof Error ? err.message : 'SOS insertion failed.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleResolveSos = async (alertId: string) => {
+    if (!supabase) return;
+    setErrorMsg(null);
+    setStatusNotice(null);
+    setResolvingId(alertId);
+    try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const {data, error} = await supabase
+        .from('sos_alerts')
+        .update({
+          status: 'RESOLVED',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', alertId)
+        .eq('user_id', verifiedUserId)
+        .select()
+        .single();
+
+      if (error || !data) {
+        throw new Error(error?.message || 'Could not update SOS alert status.');
+      }
+
+      setStatusNotice(`SOS alert (ID: ${alertId}) marked as RESOLVED in Supabase.`);
+      await loadData();
+    } catch (err) {
+      const msg =
+        err instanceof Error ? err.message : 'Could not mark SOS alert resolved.';
+      setErrorMsg(formatSupabaseDbError(msg));
+    } finally {
+      setResolvingId(null);
     }
   };
 
@@ -258,7 +313,7 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
                   >
                     <div className="min-w-0">
                       <p className="text-xs font-semibold text-slate-900 truncate">
-                        {c.name} · {c.relationship}
+                        {c.contact_name} · {c.relationship}
                       </p>
                       <p className="text-xs font-mono text-slate-600">{c.phone}</p>
                     </div>
@@ -314,15 +369,33 @@ export function SosView({userId, gps, onRefreshGps}: SosViewProps) {
                 <div key={item.id} className="py-3.5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="text-sm font-semibold text-slate-900">
-                      {item.alert_type}
+                      {item.emergency_type}
                     </span>
-                    <span className="text-xs font-mono font-semibold text-red-700">
-                      {item.status}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`text-xs font-mono font-semibold ${
+                          item.status === 'RESOLVED'
+                            ? 'text-emerald-700'
+                            : 'text-red-700'
+                        }`}
+                      >
+                        {item.status}
+                      </span>
+                      {item.status !== 'RESOLVED' && (
+                        <button
+                          type="button"
+                          disabled={resolvingId === item.id}
+                          onClick={() => handleResolveSos(item.id)}
+                          className="px-2 py-1 text-[11px] font-semibold border border-slate-300 text-slate-800 hover:bg-slate-100 rounded-md cursor-pointer disabled:opacity-50"
+                        >
+                          {resolvingId === item.id ? 'Updating...' : 'Mark Resolved'}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                  <p className="text-xs text-slate-700 mt-1">{item.alert_message}</p>
+                  <p className="text-xs text-slate-700 mt-1">{item.emergency_details}</p>
                   <p className="text-xs text-slate-500 mt-1 font-mono tabular-nums">
-                    {item.latitude.toFixed(5)}, {item.longitude.toFixed(5)} ·{' '}
+                    {item.location || `${item.latitude.toFixed(5)}, ${item.longitude.toFixed(5)}`} ·{' '}
                     {new Date(item.created_at).toLocaleString()}
                   </p>
                 </div>

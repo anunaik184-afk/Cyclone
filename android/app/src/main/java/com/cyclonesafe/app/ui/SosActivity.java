@@ -33,6 +33,7 @@ public class SosActivity extends AppCompatActivity {
 
     private double currentLat = Double.NaN;
     private double currentLng = Double.NaN;
+    private String currentLocationLabel = "";
     private final List<Models.EmergencyContact> savedContacts = new ArrayList<>();
 
     @Override
@@ -63,6 +64,7 @@ public class SosActivity extends AppCompatActivity {
             public void onLocationUpdated(double lat, double lng, String placeLabel, boolean insideIndia) {
                 currentLat = lat;
                 currentLng = lng;
+                currentLocationLabel = placeLabel;
                 tvLocation.setText(String.format(Locale.US, "GPS Fix: %s (%.5f, %.5f)", placeLabel, lat, lng));
             }
 
@@ -88,7 +90,7 @@ public class SosActivity extends AppCompatActivity {
         progressBar.setVisibility(View.VISIBLE);
         btnTriggerSos.setEnabled(false);
 
-        supabase.insertSosAlert(currentLat, currentLng, type, msg, new SupabaseClient.ApiCallback<Models.SosAlert>() {
+        supabase.insertSosAlert(currentLat, currentLng, type, msg, currentLocationLabel, new SupabaseClient.ApiCallback<Models.SosAlert>() {
             @Override
             public void onSuccess(Models.SosAlert alert) {
                 progressBar.setVisibility(View.GONE);
@@ -156,7 +158,7 @@ public class SosActivity extends AppCompatActivity {
                     TextView row = new TextView(SosActivity.this);
                     row.setPadding(0, 12, 0, 12);
                     row.setText(String.format(Locale.US, "[%s] %s — %s\nCoords: %.5f, %.5f · %s",
-                            a.status, a.alert_type, a.alert_message, a.latitude, a.longitude, a.created_at));
+                            a.status, a.emergency_type, a.emergency_details, a.latitude, a.longitude, a.created_at));
                     llHistoryContainer.addView(row);
                 }
             }

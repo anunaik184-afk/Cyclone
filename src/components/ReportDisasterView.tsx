@@ -1,4 +1,4 @@
-import React, {useCallback, useEffect, useState} from 'react';
+import React, {useCallback, useEffect, useRef, useState} from 'react';
 import {
   AlertTriangle,
   Camera,
@@ -6,7 +6,18 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import {type GpsLocationState} from '../lib/location';
-import {supabase, type DisasterReport} from '../lib/supabase';
+import {
+  deleteDisasterImage,
+  resolveReportSignedUrls,
+  uploadDisasterImageWithSignedUrl,
+  validateDisasterImageFile,
+} from '../lib/disasterStorage';
+import {
+  formatSupabaseDbError,
+  requireAuthenticatedUserId,
+  supabase,
+  type DisasterReport,
+} from '../lib/supabase';
 
 interface ReportDisasterViewProps {
   userId: string;
@@ -20,7 +31,7 @@ const DISASTER_CATEGORIES = [
   'Earthquake',
   'Landslide',
   'Fire',
-  'Storm',
+  'Tsunami',
   'Other',
 ];
 
@@ -29,6 +40,7 @@ export function ReportDisasterView({
   gps,
   onRefreshGps,
 }: ReportDisasterViewProps) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [category, setCategory] = useState(DISASTER_CATEGORIES[0]);
   const [description, setDescription] = useState('');
   const [locationLabel, setLocationLabel] = useState('');
@@ -39,24 +51,39 @@ export function ReportDisasterView({
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   const [reports, setReports] = useState<DisasterReport[]>([]);
+  const [signedUrls, setSignedUrls] = useState<Record<string, string>>({});
+  const [brokenImages, setBrokenImages] = useState<Record<string, boolean>>({});
   const [loadingReports, setLoadingReports] = useState(true);
 
   const loadReports = useCallback(async () => {
-    if (!supabase) return;
+    const client = supabase;
+    if (!client) return;
     setLoadingReports(true);
+    setErrorMsg(null);
     try {
-      const {data, error} = await supabase
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
+      const {data, error} = await client
         .from('disaster_reports')
-        .select('*')
-        .eq('user_id', userId)
+        .select(
+          'id, user_id, disaster_category, locality, description, latitude, longitude, incident_photo_url, incident_photo_path, status, created_at, updated_at',
+        )
+        .eq('user_id', verifiedUserId)
         .order('created_at', {ascending: false});
 
-      if (error) throw new Error(error.message);
-      setReports((data as DisasterReport[]) ?? []);
+      if (error) {
+        throw new Error(formatSupabaseDbError(error.message));
+      }
+
+      const rows = (data as DisasterReport[]) ?? [];
+      setReports(rows);
+
+      const {signedUrlMap} = await resolveReportSignedUrls(client, rows, 3600);
+      setSignedUrls(signedUrlMap);
+      setBrokenImages({});
     } catch (err) {
-      setErrorMsg(
-        err instanceof Error ? err.message : 'Failed to load disaster reports.',
-      );
+      const msg =
+        err instanceof Error ? err.message : 'Failed to load disaster reports.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setLoadingReports(false);
     }
@@ -69,13 +96,9 @@ export function ReportDisasterView({
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0] ?? null;
     if (file) {
-      if (!file.type.startsWith('image/')) {
-        setErrorMsg('Please select a valid image file (JPEG, PNG, or WebP).');
-        e.target.value = '';
-        return;
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        setErrorMsg('Incident photo must be 5 MB or smaller.');
+      const validationErr = validateDisasterImageFile(file);
+      if (validationErr) {
+        setErrorMsg(validationErr);
         e.target.value = '';
         return;
       }
@@ -96,7 +119,8 @@ export function ReportDisasterView({
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!supabase) {
+    const client = supabase;
+    if (!client) {
       setErrorMsg('Supabase is not configured.');
       return;
     }
@@ -114,59 +138,66 @@ export function ReportDisasterView({
     }
 
     setSubmitting(true);
+    let uploadedPath = '';
     try {
+      const verifiedUserId = await requireAuthenticatedUserId(userId);
       let uploadedUrl = '';
+
       if (imageFile) {
-        const safeName = imageFile.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const path = `${userId}/${Date.now()}_${safeName}`;
-        const {error: uploadErr} = await supabase.storage
-          .from('disaster-images')
-          .upload(path, imageFile, {
-            contentType: imageFile.type || 'image/jpeg',
-            upsert: false,
-          });
-
-        if (uploadErr) {
-          throw new Error(`Image upload failed: ${uploadErr.message}`);
-        }
-
-        const {data: pub} = supabase.storage
-          .from('disaster-images')
-          .getPublicUrl(path);
-        uploadedUrl = pub.publicUrl;
+        const uploaded = await uploadDisasterImageWithSignedUrl(
+          client,
+          verifiedUserId,
+          imageFile,
+          3600,
+        );
+        uploadedPath = uploaded.path;
+        uploadedUrl = uploaded.signedUrl;
       }
 
-      const {data, error} = await supabase
+      const nowIso = new Date().toISOString();
+      const {data, error} = await client
         .from('disaster_reports')
         .insert({
-          user_id: userId,
-          category,
+          user_id: verifiedUserId,
+          disaster_category: category,
+          locality:
+            locationLabel.trim() || `${gps.lat.toFixed(4)}, ${gps.lng.toFixed(4)}`,
           description: description.trim(),
           latitude: gps.lat,
           longitude: gps.lng,
-          location_label:
-            locationLabel.trim() || `${gps.lat.toFixed(4)}, ${gps.lng.toFixed(4)}`,
-          image_url: uploadedUrl,
+          incident_photo_url: uploadedUrl,
+          incident_photo_path: uploadedPath,
           status: 'SUBMITTED',
+          updated_at: nowIso,
         })
         .select()
         .single();
 
       if (error || !data) {
+        if (uploadedPath) {
+          await deleteDisasterImage(client, uploadedPath);
+        }
         throw new Error(error?.message || 'Could not save disaster report.');
       }
 
-      setSuccessMsg('Disaster report and photo saved to Supabase.');
+      setSuccessMsg('Disaster report saved to Supabase.');
       setDescription('');
       setLocationLabel('');
       setImageFile(null);
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
       if (previewUrl) {
         URL.revokeObjectURL(previewUrl);
         setPreviewUrl(null);
       }
       await loadReports();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : 'Report submission failed.');
+      if (uploadedPath) {
+        await deleteDisasterImage(client, uploadedPath);
+      }
+      const msg = err instanceof Error ? err.message : 'Report submission failed.';
+      setErrorMsg(formatSupabaseDbError(msg));
     } finally {
       setSubmitting(false);
     }
@@ -269,6 +300,7 @@ export function ReportDisasterView({
               <Camera className="w-4 h-4" />
               <span>{imageFile ? imageFile.name : 'Choose Image File'}</span>
               <input
+                ref={fileInputRef}
                 type="file"
                 accept="image/*"
                 onChange={handleFileChange}
@@ -316,36 +348,48 @@ export function ReportDisasterView({
             </p>
           ) : (
             <div className="space-y-4">
-              {reports.map((r) => (
-                <article
-                  key={r.id}
-                  className="p-4 border border-slate-200 rounded-lg space-y-2"
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-slate-900">
-                      {r.category}
-                    </span>
-                    <span className="text-xs font-mono text-slate-600">
-                      {r.status} · {new Date(r.created_at).toLocaleString()}
-                    </span>
-                  </div>
-                  <p className="text-xs text-slate-700 leading-relaxed">
-                    {r.description}
-                  </p>
-                  <p className="text-xs font-mono text-slate-500 tabular-nums">
-                    {r.location_label ? `${r.location_label} · ` : ''}
-                    {r.latitude.toFixed(5)}, {r.longitude.toFixed(5)}
-                  </p>
-                  {r.image_url && (
-                    <img
-                      src={r.image_url}
-                      alt={`${r.category} report`}
-                      referrerPolicy="no-referrer"
-                      className="w-full max-h-56 object-cover rounded-lg border border-slate-200 mt-2"
-                    />
-                  )}
-                </article>
-              ))}
+              {reports.map((r) => {
+                const resolvedPhotoUrl = signedUrls[r.id] || '';
+                return (
+                  <article
+                    key={r.id}
+                    className="p-4 border border-slate-200 rounded-lg space-y-2"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold text-slate-900">
+                        {r.disaster_category}
+                      </span>
+                      <span className="text-xs font-mono text-slate-600">
+                        {r.status} · {new Date(r.created_at).toLocaleString()}
+                      </span>
+                    </div>
+                    <p className="text-xs text-slate-700 leading-relaxed">
+                      {r.description}
+                    </p>
+                    <p className="text-xs font-mono text-slate-500 tabular-nums">
+                      {r.locality ? `${r.locality} · ` : ''}
+                      {r.latitude.toFixed(5)}, {r.longitude.toFixed(5)}
+                    </p>
+                    {resolvedPhotoUrl && !brokenImages[r.id] && (
+                      <img
+                        src={resolvedPhotoUrl}
+                        alt={`${r.disaster_category} report`}
+                        referrerPolicy="no-referrer"
+                        onError={() =>
+                          setBrokenImages((prev) => ({...prev, [r.id]: true}))
+                        }
+                        className="w-full max-h-56 object-cover rounded-lg border border-slate-200 mt-2"
+                      />
+                    )}
+                    {(r.incident_photo_path || r.incident_photo_url) &&
+                      (!resolvedPhotoUrl || brokenImages[r.id]) && (
+                        <p className="text-xs text-amber-700 mt-1">
+                          Private image attached — tap Refresh to renew signed link.
+                        </p>
+                      )}
+                  </article>
+                );
+              })}
             </div>
           )}
         </div>
